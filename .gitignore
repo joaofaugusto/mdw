@@ -1,0 +1,6 @@
+/mdw/node_modules
+.env
+/config
+/scripts
+/sql
+/log
