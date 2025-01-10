@@ -23,9 +23,6 @@ func loadEnv() {
 }
 
 func createServer(port, message string, handler http.Handler) *http.Server {
-	if port == "" {
-		log.Fatalf("Port must be defined for %s", message)
-	}
 	return &http.Server{
 		Addr:         ":" + port,
 		Handler:      handler,
@@ -60,7 +57,7 @@ func main() {
 	startServer(&g, server1)
 	startServer(&g, server2)
 
-	// Wait for all goroutines to complete
+	// Aguardando todas as go-routines completar
 	if err := g.Wait(); err != nil {
 		log.Fatal(err)
 	}
