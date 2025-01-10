@@ -1,34 +1,32 @@
 package routes
 
 import (
-	"io"
-	"os"
+	"net/http"
 
 	"github.com/gin-gonic/gin"
 )
 
-var Router = gin.Default()
-
-func IniciarRotas() {
-
-	Logging()
-
-	Router.GET("/", func(c *gin.Context) {
-		c.JSON(200, gin.H{
-			"message": "teste",
-		})
+// Essa função permite que crie vários servers com diferentes portas (sempre checar o .env)
+func criarRouter(message string) http.Handler {
+	e := gin.New()
+	e.Use(gin.Recovery())
+	e.GET("/", func(c *gin.Context) {
+		c.JSON(
+			http.StatusOK,
+			gin.H{
+				"codigo":   http.StatusOK,
+				"mensagem": message,
+			},
+		)
 	})
-	Router.Run()
+	return e
 }
 
-func Logging() {
-	// Desabilitando as cores do log no terminal
-	gin.DisableConsoleColor()
+// Inicialização dos servers retornando a mensagem deles
+func MdwRouter_01() http.Handler {
+	return criarRouter("Servidor 01")
+}
 
-	f, err := os.OpenFile("log/history.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		panic("Falha ao abrir o arquivo de log: " + err.Error())
-	}
-
-	gin.DefaultWriter = io.MultiWriter(f, os.Stdout)
+func MdwRouter_02() http.Handler {
+	return criarRouter("Servidor 02")
 }
