@@ -6,6 +6,12 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+func HealthCheckHandler(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{
+		"status": "ok",
+	})
+}
+
 // Essa função permite que crie vários servers com diferentes portas (sempre checar o .env)
 func criarRouter(message string) http.Handler {
 	e := gin.New()
@@ -19,6 +25,8 @@ func criarRouter(message string) http.Handler {
 			},
 		)
 	})
+
+	e.GET("/health_check", HealthCheckHandler)
 	return e
 }
 
