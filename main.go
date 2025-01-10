@@ -50,8 +50,8 @@ func main() {
 	loadEnv()
 
 	// carregando as portas do .env
-	porta_server_01 := ":" + os.Getenv("SERVER_01_PORT")
-	porta_server_02 := ":" + os.Getenv("SERVER_02_PORT")
+	porta_server_01 := os.Getenv("SERVER_01_PORT")
+	porta_server_02 := os.Getenv("SERVER_02_PORT")
 
 	server1 := createServer(porta_server_01, "Servidor 01", routes.MdwRouter_01())
 	server2 := createServer(porta_server_02, "Servidor 02", routes.MdwRouter_02())
