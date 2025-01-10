@@ -14,6 +14,7 @@ func HealthCheckHandler(c *gin.Context) {
 
 // Essa função permite que crie vários servers com diferentes portas (sempre checar o .env)
 func criarRouter(message string) http.Handler {
+	gin.SetMode(gin.ReleaseMode)
 	e := gin.New()
 	e.Use(gin.Recovery())
 	e.GET("/", func(c *gin.Context) {
