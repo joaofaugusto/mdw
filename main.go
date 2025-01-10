@@ -1,138 +1,169 @@
 package main
 
 import (
+	"context"
 	"fmt"
-	"io"
 	"log"
-	"math/rand"
+	"mdw/health"
 	"mdw/routes"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/joho/godotenv"
 	"golang.org/x/sync/errgroup"
 )
 
-func loadEnv() {
-	err := godotenv.Load()
-	if err != nil {
-		log.Fatal("Erro ao carregar o arquivo .env")
-	}
+type ConfiguracaoServidor struct {
+	Port           string
+	Handler        http.Handler
+	HealthCheckURL string
+	ChaosModeConfig
 }
 
-func getChaosModeConfig() (bool, int, int) {
-	chaosModeEnabled := os.Getenv("CHAOS_MODE_ENABLED") == "true"
-	chaosFailureRate := 35  // default to 10% if not set
-	chaosShutdownRate := 35 // default to 10% if not set
+type ChaosModeConfig struct {
+	Enabled      bool
+	FailureRate  int
+	ShutdownRate int
+}
 
-	if chaosModeEnabled {
+func loadEnv() error {
+	if err := godotenv.Load(); err != nil {
+		return fmt.Errorf("falha ao carregar o arquivo .env: %w", err)
+	}
+	return nil
+}
+
+func getChaosModeConfig() ChaosModeConfig {
+	config := ChaosModeConfig{
+		Enabled:      os.Getenv("CHAOS_MODE_ENABLED") == "true",
+		FailureRate:  35,
+		ShutdownRate: 35,
+	}
+
+	if config.Enabled {
 		if rate := os.Getenv("CHAOS_FAILURE_RATE"); rate != "" {
-			fmt.Sscanf(rate, "%d", &chaosFailureRate)
+			if parsed, err := strconv.Atoi(rate); err == nil {
+				config.FailureRate = parsed
+			}
 		}
 		if rate := os.Getenv("CHAOS_SHUTDOWN_RATE"); rate != "" {
-			fmt.Sscanf(rate, "%d", &chaosShutdownRate)
+			if parsed, err := strconv.Atoi(rate); err == nil {
+				config.ShutdownRate = parsed
+			}
 		}
 	}
 
-	return chaosModeEnabled, chaosFailureRate, chaosShutdownRate
+	return config
 }
 
-func criarServidor(port, message string, handler http.Handler) *http.Server {
+func criarServidor(config ConfiguracaoServidor) *http.Server {
 	return &http.Server{
-		Addr:         ":" + port,
-		Handler:      handler,
+		Addr:         ":" + config.Port,
+		Handler:      config.Handler,
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 10 * time.Second,
 	}
 }
 
-func iniciarServidor(g *errgroup.Group, server *http.Server) {
+func iniciarServidor(ctx context.Context, g *errgroup.Group, server *http.Server) {
 	g.Go(func() error {
-		log.Printf("Iniciando servidor em %s\n", server.Addr)
-		err := server.ListenAndServe()
-		if err != nil && err != http.ErrServerClosed {
-			return err
+		log.Printf("Iniciando o servidor em %s\n", server.Addr)
+
+		errChan := make(chan error, 1)
+		go func() {
+			errChan <- server.ListenAndServe()
+		}()
+
+		select {
+		case <-ctx.Done():
+			log.Printf("Contexto cancelado para servidor %s, iniciando shutdown...\n", server.Addr)
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			return server.Shutdown(shutdownCtx)
+		case err := <-errChan:
+			if err != nil && err != http.ErrServerClosed {
+				return fmt.Errorf("erro no servidor %s: %w", server.Addr, err)
+			}
+			return nil
 		}
-		return nil
 	})
 }
 
-func healthCheck(url string, chaosModeEnabled bool, chaosFailureRate int) bool {
-	// Simulate a random failure (controlled by .env variable)
-	if chaosModeEnabled && rand.Intn(100) < chaosFailureRate {
-		log.Printf("Falha simulada em: %s\n", url)
-		return false
-	}
-
-	resp, err := http.Get(url)
-	if err != nil {
-		log.Printf("Saúde do servidor falhou em %s: %v", url, err)
-		return false
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusOK {
-		return true
-	}
-
-	body, _ := io.ReadAll(resp.Body)
-	log.Printf("Checagem de saúde do servidor falhou em %s, status code: %d, body: %s", url, resp.StatusCode, string(body))
-	return false
-}
-
-func monitorAndRestartServer(server *http.Server, url string, chaosModeEnabled bool, chaosShutdownRate int, chaosFailureRate int) {
-	for {
-		// Simulate a random shutdown (controlled by .env variable)
-		if chaosModeEnabled && rand.Intn(100) < chaosShutdownRate {
-			log.Printf("Simulando queda do servidor em %s\n", server.Addr)
-			server.Close()
-			// Re-create and restart the server after shutting it down
-			newServer := criarServidor(server.Addr[len(":"):], "Servidor Reiniciado", server.Handler)
-			iniciarServidor(&g, newServer)
+func monitorarServidor(ctx context.Context, config ConfiguracaoServidor, server *http.Server) {
+	restartServer := func() error {
+		log.Printf("Reiniciando servidor em: %s\n", server.Addr)
+		if err := server.Close(); err != nil {
+			return fmt.Errorf("erro ao fechar o servidor: %w", err)
 		}
 
-		if !healthCheck(url, chaosModeEnabled, chaosFailureRate) {
-			log.Printf("Saúde do servidor falhou em %s. Reinciando...\n", url)
+		time.Sleep(1 * time.Second)
 
-			// Stop the server and restart it
-			server.Close()
-			// Re-create and restart the server
-			newServer := criarServidor(server.Addr[len(":"):], "Servidor Reiniciado", server.Handler)
-			iniciarServidor(&g, newServer)
-		}
-
-		// Wait some time before the next check
-		time.Sleep(30 * time.Second)
+		newServer := criarServidor(config)
+		iniciarServidor(ctx, &g, newServer)
+		server = newServer
+		return nil
 	}
+
+	var checker health.HealthChecker = health.NewHTTPChecker(health.CheckConfig{
+		URL:           config.HealthCheckURL,
+		Timeout:       5 * time.Second,
+		RetryAttempts: 3,
+		RetryDelay:    1 * time.Second,
+	})
+
+	if config.ChaosModeConfig.Enabled {
+		checker = health.NewChaosChecker(checker, config.ChaosModeConfig.FailureRate)
+	}
+
+	monitor := health.NewMonitor(health.MonitorConfig{
+		Name:          fmt.Sprintf("Server-%s", config.Port),
+		CheckInterval: 30 * time.Second,
+		OnUnhealthy:   restartServer,
+		MaxRetries:    3,
+		RetryDelay:    5 * time.Second,
+	}, checker)
+
+	go monitor.Start(ctx)
 }
 
-var (
-	g errgroup.Group
-)
+var g errgroup.Group
 
 func main() {
-	// carregando o .env
-	loadEnv()
+	if err := loadEnv(); err != nil {
+		log.Fatal(err)
+	}
 
-	// carregando as portas do .env
-	porta_server_01 := os.Getenv("SERVER_01_PORT")
-	porta_server_02 := os.Getenv("SERVER_02_PORT")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-	chaosModeEnabled, chaosFailureRate, chaosShutdownRate := getChaosModeConfig()
+	chaosConfig := getChaosModeConfig()
 
-	server1 := criarServidor(porta_server_01, "Mensagem Não Usada", routes.MdwRouter_01())
-	server2 := criarServidor(porta_server_02, "Mensagem Não Usada", routes.MdwRouter_02())
+	servidores := []ConfiguracaoServidor{
+		{
+			Port:            os.Getenv("SERVER_01_PORT"),
+			Handler:         routes.MdwRouter_01(),
+			HealthCheckURL:  fmt.Sprintf("http://localhost:%s/health_check", os.Getenv("SERVER_01_PORT")),
+			ChaosModeConfig: chaosConfig,
+		},
+		{
+			Port:            os.Getenv("SERVER_02_PORT"),
+			Handler:         routes.MdwRouter_02(),
+			HealthCheckURL:  fmt.Sprintf("http://localhost:%s/health_check", os.Getenv("SERVER_02_PORT")),
+			ChaosModeConfig: chaosConfig,
+		},
+	}
 
-	iniciarServidor(&g, server1)
-	iniciarServidor(&g, server2)
-
-	// Checa as rotas e reinicia caso necessário
-	go monitorAndRestartServer(server1, "http://localhost:"+porta_server_01+"/health_check", chaosModeEnabled, chaosShutdownRate, chaosFailureRate)
-
-	go monitorAndRestartServer(server2, "http://localhost:"+porta_server_02+"/health_check", chaosModeEnabled, chaosShutdownRate, chaosFailureRate)
+	for _, config := range servidores {
+		server := criarServidor(config)
+		iniciarServidor(ctx, &g, server)
+		monitorarServidor(ctx, config, server)
+	}
 
 	if err := g.Wait(); err != nil {
-		log.Fatal(err)
+		log.Printf("Erro no servidor: %v\n", err)
+		cancel()
+		os.Exit(1)
 	}
 }
