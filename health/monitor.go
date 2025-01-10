@@ -50,6 +50,7 @@ func (m *Monitor) Start(ctx context.Context) {
 				failCount++
 				if time.Since(lastFailure) > time.Minute {
 					failCount = 1 // Reset fail count after a minute of no failures
+					log.Printf("[%s] Fail count reset due to 1 minute of no failures", m.config.Name)
 				}
 				lastFailure = time.Now()
 

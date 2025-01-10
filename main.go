@@ -114,15 +114,29 @@ func monitorarServidor(ctx context.Context, config ConfiguracaoServidor, server 
 	})
 
 	if config.ChaosModeConfig.Enabled {
-		checker = health.NewChaosChecker(checker, config.ChaosModeConfig.FailureRate)
+		checker = health.NewChaosChecker(checker, config.ChaosModeConfig.FailureRate, config.ChaosModeConfig.ShutdownRate)
 	}
 
 	monitor := health.NewMonitor(health.MonitorConfig{
 		Name:          fmt.Sprintf("Server-%s", config.Port),
 		CheckInterval: 30 * time.Second,
-		OnUnhealthy:   restartServer,
-		MaxRetries:    3,
-		RetryDelay:    5 * time.Second,
+		OnUnhealthy: func() error {
+			log.Println("Servidor considerado não saudável. Iniciando reinicialização ou simulação de shutdown.")
+
+			// Check if shutdown is triggered by chaos mode
+			chaosChecker := checker.(*health.ChaosChecker)
+			if chaosChecker.GetServerShutdown() {
+				log.Println("Simulando desligamento do servidor.")
+				chaosChecker.ResetShutdownStatus() // Reset after triggering shutdown
+				log.Println("Servidor será encerrado agora (simulação de shutdown).")
+				os.Exit(1) // This simulates the server shutting down
+			}
+
+			// If not in chaos mode, restart the server
+			return restartServer()
+		},
+		MaxRetries: 3,
+		RetryDelay: 5 * time.Second,
 	}, checker)
 
 	go monitor.Start(ctx)
