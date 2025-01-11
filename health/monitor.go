@@ -2,7 +2,6 @@ package health
 
 import (
 	"context"
-	"log"
 	"time"
 )
 
@@ -50,26 +49,22 @@ func (m *Monitor) Start(ctx context.Context) {
 				failCount++
 				if time.Since(lastFailure) > time.Minute {
 					failCount = 1 // Redefinir a contagem de falhas apos um minuto sem falhas
-					log.Printf("[%s] contagem de falhas redefinida devido a 1 minuto sem falhas", m.config.Name)
 				}
 				lastFailure = time.Now()
 
 				if failCount > m.config.MaxRetries {
-					log.Printf("[%s] várias falhas detectadas (%d), acionando reinicialização", m.config.Name, failCount)
 					if m.config.OnUnhealthy != nil {
 						if err := m.config.OnUnhealthy(); err != nil {
-							log.Printf("[%s] erro ao lidar com estado unhealthy: %v", m.config.Name, err)
+							return
 						}
 					}
 					failCount = 0                   // Redefinir apos reiniciar
 					time.Sleep(m.config.RetryDelay) // Aguarda antes da proxima verificacao
 				} else {
-					log.Printf("[%s] Falha na verificação (%d/%d): %v",
-						m.config.Name, failCount, m.config.MaxRetries, err)
+					return
 				}
 			} else {
 				failCount = 0 // Redefinir na verificacao bem sucedida
-				log.Printf("[%s] Teste de integridade checado", m.config.Name)
 			}
 		}
 	}
