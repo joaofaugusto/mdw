@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"mdw/health"
+	"mdw/loadbalancer"
 	"mdw/routes"
 	"net/http"
 	"os"
@@ -123,16 +124,14 @@ func monitorarServidor(ctx context.Context, config ConfiguracaoServidor, server 
 		OnUnhealthy: func() error {
 			log.Println("Servidor considerado não saudável. Iniciando reinicialização ou simulação de shutdown.")
 
-			// Check if shutdown is triggered by chaos mode
 			chaosChecker := checker.(*health.ChaosChecker)
 			if chaosChecker.GetServerShutdown() {
 				log.Println("Simulando desligamento do servidor.")
-				chaosChecker.ResetShutdownStatus() // Reset after triggering shutdown
+				chaosChecker.ResetShutdownStatus()
 				log.Println("Servidor será encerrado agora (simulação de shutdown).")
-				os.Exit(1) // This simulates the server shutting down
+				os.Exit(1)
 			}
 
-			// If not in chaos mode, restart the server
 			return restartServer()
 		},
 		MaxRetries: 3,
@@ -169,14 +168,57 @@ func main() {
 		},
 	}
 
+	var g errgroup.Group
+
+	// Iniciar servidores back-end
 	for _, config := range servidores {
 		server := criarServidor(config)
-		iniciarServidor(ctx, &g, server)
-		monitorarServidor(ctx, config, server)
-	}
+		cfg := config
+		g.Go(func() error {
+			log.Printf("Iniciando servidor na porta %s", cfg.Port)
+			errChan := make(chan error, 1)
 
+			go func() {
+				errChan <- server.ListenAndServe()
+			}()
+
+			select {
+			case <-ctx.Done():
+				log.Printf("Desligando servidor na porta %s...", cfg.Port)
+				shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				return server.Shutdown(shutdownCtx)
+			case err := <-errChan:
+				if err != nil && err != http.ErrServerClosed {
+					return fmt.Errorf("servidor na porta %s falhou: %w", cfg.Port, err)
+				}
+				return nil
+			}
+		})
+
+		// Iniciar monitoramento de integridade
+		g.Go(func() error {
+			monitorarServidor(ctx, cfg, server)
+			return nil
+		})
+	}
+	// Inicia o load balancer
+	servers := []string{
+		"http://localhost:" + os.Getenv("SERVER_01_PORT"),
+		"http://localhost:" + os.Getenv("SERVER_02_PORT"),
+	}
+	lb := loadbalancer.NewLoadBalancer(servers)
+	g.Go(func() error {
+		log.Println("Iniciando o load balancer em http://localhost:8000...")
+		if err := http.ListenAndServe(":8000", lb); err != nil {
+			return fmt.Errorf("load balancer falhou: %w", err)
+		}
+		return nil
+	})
+
+	// Aguarda todas as goroutines terminarem
 	if err := g.Wait(); err != nil {
-		log.Printf("Erro no servidor: %v\n", err)
+		log.Printf("Error: %v", err)
 		cancel()
 		os.Exit(1)
 	}

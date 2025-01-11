@@ -49,27 +49,27 @@ func (m *Monitor) Start(ctx context.Context) {
 			if err != nil {
 				failCount++
 				if time.Since(lastFailure) > time.Minute {
-					failCount = 1 // Reset fail count after a minute of no failures
-					log.Printf("[%s] Fail count reset due to 1 minute of no failures", m.config.Name)
+					failCount = 1 // Redefinir a contagem de falhas apos um minuto sem falhas
+					log.Printf("[%s] contagem de falhas redefinida devido a 1 minuto sem falhas", m.config.Name)
 				}
 				lastFailure = time.Now()
 
 				if failCount > m.config.MaxRetries {
-					log.Printf("[%s] Multiple failures detected (%d), triggering restart", m.config.Name, failCount)
+					log.Printf("[%s] várias falhas detectadas (%d), acionando reinicialização", m.config.Name, failCount)
 					if m.config.OnUnhealthy != nil {
 						if err := m.config.OnUnhealthy(); err != nil {
-							log.Printf("[%s] Error handling unhealthy state: %v", m.config.Name, err)
+							log.Printf("[%s] erro ao lidar com estado unhealthy: %v", m.config.Name, err)
 						}
 					}
-					failCount = 0                   // Reset after restart
-					time.Sleep(m.config.RetryDelay) // Wait before next check
+					failCount = 0                   // Redefinir apos reiniciar
+					time.Sleep(m.config.RetryDelay) // Aguarda antes da proxima verificacao
 				} else {
-					log.Printf("[%s] Check failed (%d/%d): %v",
+					log.Printf("[%s] Falha na verificação (%d/%d): %v",
 						m.config.Name, failCount, m.config.MaxRetries, err)
 				}
 			} else {
-				failCount = 0 // Reset on successful check
-				log.Printf("[%s] Health check passed", m.config.Name)
+				failCount = 0 // Redefinir na verificacao bem sucedida
+				log.Printf("[%s] Teste de integridade checado", m.config.Name)
 			}
 		}
 	}

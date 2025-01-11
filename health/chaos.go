@@ -32,7 +32,7 @@ func NewChaosChecker(checker HealthChecker, failureRate int, shutdownRate int) *
 func (c *ChaosChecker) Check(ctx context.Context) error {
 	// Primeiro verifique se o servico esta ok
 	if err := c.wrapped.Check(ctx); err != nil {
-		c.falhasConsecutivas = 0 // Redefinir o caos em caso de falha real
+		c.falhasConsecutivas = 0 // Redefinir o caos em caso de falha
 		return fmt.Errorf("verificação de integridade falhou: %w", err)
 	}
 
