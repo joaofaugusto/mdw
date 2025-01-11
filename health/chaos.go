@@ -8,69 +8,69 @@ import (
 )
 
 type ChaosChecker struct {
-	wrapped             HealthChecker
-	failureRate         int
-	lastRestart         time.Time
-	minUptime           time.Duration
-	consecutiveFails    int
-	maxConsecutiveFails int
-	shutdownSimulated   bool // Track if shutdown was simulated
-	shutdownRate        int  // Probability of simulating shutdown
+	wrapped                  HealthChecker
+	taxaFalha                int
+	ultimoRestart            time.Time
+	tempoMinimoReset         time.Duration
+	falhasConsecutivas       int
+	maximoFalhasConsecutivas int
+	quedaSimulada            bool // Acompanha se o desligamento foi simulado
+	taxaQueda                int  // Probabilidade de simular desligamento
 }
 
 func NewChaosChecker(checker HealthChecker, failureRate int, shutdownRate int) *ChaosChecker {
 	return &ChaosChecker{
-		wrapped:             checker,
-		failureRate:         failureRate,
-		minUptime:           1 * time.Minute, // Minimum time between chaos restarts
-		lastRestart:         time.Now(),
-		maxConsecutiveFails: 3,            // Maximum number of consecutive chaos failures
-		shutdownRate:        shutdownRate, // Initialize shutdown rate
+		wrapped:                  checker,
+		taxaFalha:                failureRate,     // Inicializa a probabilidade de falha
+		tempoMinimoReset:         1 * time.Minute, // Tempo minimo entre reset do caos
+		ultimoRestart:            time.Now(),
+		maximoFalhasConsecutivas: 3,            // Numero maximo de falhas consecutivas
+		taxaQueda:                shutdownRate, // Inicializa a probabilidade de queda
 	}
 }
 
 func (c *ChaosChecker) Check(ctx context.Context) error {
-	// First check if the actual service is healthy
+	// Primeiro verifique se o servico esta ok
 	if err := c.wrapped.Check(ctx); err != nil {
-		c.consecutiveFails = 0 // Reset chaos fails on real failure
-		return fmt.Errorf("real health check failed: %w", err)
+		c.falhasConsecutivas = 0 // Redefinir o caos em caso de falha real
+		return fmt.Errorf("verificação de integridade falhou: %w", err)
 	}
 
-	// Only apply chaos if minimum uptime has passed
-	if time.Since(c.lastRestart) < c.minUptime {
+	// aplicar somente se o tempo minimo tiver passado
+	if time.Since(c.ultimoRestart) < c.tempoMinimoReset {
 		return nil
 	}
 
-	// Apply chaos with decreasing probability for consecutive failures
-	adjustedRate := c.failureRate / (c.consecutiveFails + 1)
+	// aplicar com probabilidade decrescente para falhas consecutivas
+	adjustedRate := c.taxaFalha / (c.falhasConsecutivas + 1)
 	if rand.Intn(100) < adjustedRate {
-		c.consecutiveFails++
-		if c.consecutiveFails > c.maxConsecutiveFails {
-			c.consecutiveFails = 0 // Reset after max consecutive failures
+		c.falhasConsecutivas++
+		if c.falhasConsecutivas > c.maximoFalhasConsecutivas {
+			c.falhasConsecutivas = 0 // Redefinir apos o maximo de falhas consecutivas
 			return nil
 		}
-		return fmt.Errorf("chaos mode: simulated failure (attempt %d)", c.consecutiveFails)
+		return fmt.Errorf("chaos mode: falha simulada (tentativa %d)", c.falhasConsecutivas)
 	}
 
-	// Check for shutdown simulation
-	if rand.Intn(100) < c.shutdownRate {
-		c.shutdownSimulated = true
-		return fmt.Errorf("chaos mode: simulated shutdown")
+	// Verifica a simulação de queda
+	if rand.Intn(100) < c.taxaQueda {
+		c.quedaSimulada = true
+		return fmt.Errorf("chaos mode: queda simulada")
 	}
 
-	c.consecutiveFails = 0
+	c.falhasConsecutivas = 0
 	return nil
 }
 
-// ChaosChecker now has a method to trigger server shutdown
+// ChaosChecker agora tem um metodo para acionar o desligamento do servidor
 func (c *ChaosChecker) GetServerShutdown() bool {
-	// Return true if shutdown needs to be simulated
-	return rand.Intn(100) < c.failureRate
+	// Retorna true se a queda precisar ser simulada
+	return rand.Intn(100) < c.taxaFalha
 }
 
-// Reset shutdown status after triggering a shutdown
+// Redefinir o status de desligamento após acionar uma queda
 func (c *ChaosChecker) ResetShutdownStatus() {
-	// You can reset any internal state or flags here if needed
+	// Redefinir qualquer estado interno ou sinalizadores aqui, se necessário
 }
 
 func (c *ChaosChecker) GetStatus() Status {
