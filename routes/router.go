@@ -81,6 +81,7 @@ func criarRouter() (http.Handler, error) {
 
 	// Routes
 	router.GET("/", renderizarTemplate("index.tmpl.html"))
+	router.StaticFile("/css/index.css", "./public/css/index.css")
 	router.GET("/health_check", HealthCheckHandler)
 
 	return router, nil
